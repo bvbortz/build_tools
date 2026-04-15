@@ -158,6 +158,14 @@ def make():
         base.delete_dir("v8/third_party/llvm-build/Release+Asserts/include")
         base.replaceInFile("v8/build/config/mac/BUILD.gn", "\"-mmacosx-version-min=$mac_deployment_target\",", "\"-mmacosx-version-min=$mac_deployment_target\",\n    \"-Wno-deprecated-declarations\",")
 
+  # Fix V8/Chromium base headers: add #include <cstdint> so intptr_t, uint8_t, etc. are defined (required on some toolchains)
+  for rel_path in ["v8/src/base/macros.h", "v8/src/base/logging.h"]:
+    if base.is_file(rel_path):
+      content = base.readFile(rel_path)
+      if content and "#include <cstdint>" not in content:
+        base.writeFile(rel_path, "#include <cstdint>\n" + content)
+        print("[v8] Patched " + rel_path + " (added #include <cstdint>)")
+
   # --------------------------------------------------------------------------
   # build
   os.chdir("v8")

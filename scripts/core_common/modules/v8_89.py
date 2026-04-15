@@ -78,6 +78,28 @@ def fix_ubuntu24():
   os.chdir(old_cur)
   return
 
+def fix_libstdcxx_for_system_libs():
+  """Use system libstdc++ so linking with system libs (e.g. libicuuc) that require GLIBCXX_3.4.30 works."""
+  if base.host_platform() != "linux":
+    return
+  lib_dir = "third_party/llvm-build/Release+Asserts/lib"
+  if not base.is_file(lib_dir + "/libstdc++.so.6"):
+    return
+  # Already a symlink to system? Skip to avoid breaking.
+  if base.is_file(lib_dir + "/libstdc++.so.6.old"):
+    return
+  old_cur = os.getcwd()
+  try:
+    os.chdir(lib_dir)
+    base.cmd("mv", ["libstdc++.so.6", "libstdc++.so.6.old"])
+    base.cmd("ln", ["-s", "/usr/lib/x86_64-linux-gnu/libstdc++.so.6", "libstdc++.so.6"])
+    print("[v8_89] Replaced bundled libstdc++.so.6 with system lib (fix for GLIBCXX_3.4.30 / libicuuc)")
+  except Exception as e:
+    print("[v8_89] fix_libstdcxx_for_system_libs: " + str(e))
+  finally:
+    os.chdir(old_cur)
+  return
+
 def make_args(args, platform, is_64=True, is_debug=False):
   args_copy = args[:]
   if is_64:
@@ -270,11 +292,28 @@ def make():
     base.copy_file("v8/third_party/jinja2/tests.py", "v8/third_party/jinja2/tests.py.bak")
     base.replaceInFile("v8/third_party/jinja2/tests.py", "from collections import Mapping", "try:\n    from collections.abc import Mapping\nexcept ImportError:\n    from collections import Mapping")
 
+  # Fix V8/Chromium headers: add #include <cstdint> so intptr_t, uint8_t, uint16_t, etc. are defined (required on some toolchains)
+  v8_cstdint_headers = [
+    "v8/src/base/macros.h",
+    "v8/src/base/logging.h",
+    "v8/src/inspector/v8-string-conversions.h",
+    "v8/src/base/vlq-base64.h",
+  ]
+  for rel_path in v8_cstdint_headers:
+    if base.is_file(rel_path):
+      content = base.readFile(rel_path)
+      if content and "#include <cstdint>" not in content:
+        base.writeFile(rel_path, "#include <cstdint>\n" + content)
+        print("[v8_89] Patched " + rel_path + " (added #include <cstdint>)")
+
   os.chdir("v8")
 
   is_ubuntu24 = is_ubuntu_24_or_higher()
   fix_ubuntu24()
-  
+  # When not using sysroot, use system libstdc++ so linking with system libicuuc (GLIBCXX_3.4.30) works
+  if config.option("sysroot") == "":
+    fix_libstdcxx_for_system_libs()
+
   gn_args = ["v8_static_library=true",
              "is_component_build=false",
              "v8_monolithic=true",
